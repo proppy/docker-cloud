@@ -29,21 +29,20 @@ import (
 	"time"
 )
 
-var(
-  instanceType = flag.String("instance-type",
-                             "/zones/us-central1-a/machineTypes/n1-standard-1",
-                             "The reference to the instance type to create.")
-  image = flag.String("image",
-                      "https://www.googleapis.com/compute/v1beta16/projects/debian-cloud/global/images/debian-7-wheezy-v20131120",
-                      "The GCE image to boot from.")
-
-
+var (
+	instanceType = flag.String("instance-type",
+		"/zones/us-central1-a/machineTypes/n1-standard-1",
+		"The reference to the instance type to create.")
+	image = flag.String("image",
+		"https://www.googleapis.com/compute/v1beta16/projects/debian-cloud/global/images/debian-7-wheezy-v20131120",
+		"The GCE image to boot from.")
 )
+
 const startup = `#!/bin/bash
 sysctl -w net.ipv4.ip_forward=1
 wget -qO- https://get.docker.io/ | sh
 /etc/init.d/docker stop
-docker -d -H=tcp://127.0.0.1:8080 &
+docker -d -H=tcp://127.0.0.1:8000 &
 `
 
 // A Google Compute Engine implementation of the Cloud interface
@@ -232,7 +231,7 @@ func (cloud GCECloud) waitForOp(op *compute.Operation, zone string) error {
 			log.Printf("Got compute.Operation, err: %#v, %v", op, err)
 		}
 		if op.Status != "PENDING" && op.Status != "RUNNING" && op.Status != "DONE" {
-			log.Printf("Error waiting for operation: %s\n", op);
+			log.Printf("Error waiting for operation: %s\n", op)
 			return errors.New(fmt.Sprintf("Bad operation: %s", op))
 		}
 	}
