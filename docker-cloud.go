@@ -26,7 +26,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/brendandburns/docker-cloud/dockercloud"
+	"github.com/proppy/docker-cloud/dockercloud"
 )
 
 // Try to connect to a tunnel to the docker dameon if it exists.
