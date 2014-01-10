@@ -59,7 +59,7 @@ func (server ProxyServer) doServe(w http.ResponseWriter, r *http.Request) error 
 	var ip string
 	path := r.URL.Path
 	query := r.URL.RawQuery
-	host := fmt.Sprintf("localhost:%s", *localPort)
+	host := fmt.Sprintf("localhost:%d", *localPort)
 	targetUrl := fmt.Sprintf("http://%s%s?%s", host, path, query)
 
 	w.Header().Add("Content-Type", "application/json")
