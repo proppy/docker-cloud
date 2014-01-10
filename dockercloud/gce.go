@@ -34,7 +34,7 @@ var (
 		"/zones/us-central1-a/machineTypes/n1-standard-1",
 		"The reference to the instance type to create.")
 	image = flag.String("image",
-		"https://www.googleapis.com/compute/v1beta16/projects/debian-cloud/global/images/debian-7-wheezy-v20131120",
+		"https://www.googleapis.com/compute/v1/projects/debian-cloud/global/images/debian-7-wheezy-v20131120",
 		"The GCE image to boot from.")
 )
 
