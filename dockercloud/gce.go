@@ -17,11 +17,14 @@ package dockercloud
 import (
 	"code.google.com/p/goauth2/oauth"
 	compute "code.google.com/p/google-api-go-client/compute/v1"
+	"net/http"
+	"path"
+
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -29,19 +32,16 @@ import (
 )
 
 var (
-	instanceType = flag.String("instancetype",
+	projectId             = flag.String("project", "", "Google Cloud Project Name")
+	gcloudCredentialsPath = flag.String("gcloudcredentials", path.Join(os.Getenv("HOME"), ".config/gcloud/credentials"), "gcloud SDK credentials path")
+	instanceType          = flag.String("instancetype",
 		"/zones/us-central1-a/machineTypes/n1-standard-1",
 		"The reference to the instance type to create.")
 	image = flag.String("image",
 		"https://www.googleapis.com/compute/v1/projects/debian-cloud/global/images/backports-debian-7-wheezy-v20131127",
 		"The GCE image to boot from.")
-	diskName     = flag.String("diskname", "docker-root", "Name of the instance root disk")
-	diskSizeGb   = flag.Int64("disksize", 100, "Size of the root disk in GB")
-	clientId     = flag.String("id", "676599397109-0te3n95co16j9mkinnq6vdhphp4nnd06.apps.googleusercontent.com", "Client id")
-	clientSecret = flag.String("secret", "JnMnI5z9iH7YItv_jy_TZ1Hg", "Client Secret")
-	scope        = flag.String("scope", "https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.read_write", "OAuth Scope")
-	code         = flag.String("code", "", "Authorization code")
-	projectId    = flag.String("project", "", "Google Cloud Project Name")
+	diskName   = flag.String("diskname", "docker-root", "Name of the instance root disk")
+	diskSizeGb = flag.Int64("disksize", 100, "Size of the root disk in GB")
 )
 
 const startup = `#!/bin/bash
@@ -57,75 +57,63 @@ type GCECloud struct {
 	projectId string
 }
 
-// Create a GCE Cloud instance.  'clientId', 'clientSecret' and 'scope' are used to ask for a client
-// credential.  'code' is optional and is only used if a cached credential can not be found.
-// 'projectId' is the Google Cloud project name.
-func NewCloudGce() *GCECloud {
-	// Set up a configuration.
-	config := &oauth.Config{
-		ClientId:     *clientId,
-		ClientSecret: *clientSecret,
-		RedirectURL:  "oob",
-		Scope:        *scope,
-		AuthURL:      "https://accounts.google.com/o/oauth2/auth",
-		TokenURL:     "https://accounts.google.com/o/oauth2/token",
-		// TODO(bburns) : This prob. won't work on Windows
-		TokenCache: oauth.CacheFile(os.Getenv("HOME") + "/cache.json"),
-		AccessType: "offline",
+type gcloudCredentialsCache struct {
+	Data []struct {
+		Credential struct {
+			Client_Id     string
+			Client_Secret string
+			Access_Token  string
+			Refresh_Token string
+			Token_Expiry  time.Time
+		}
+		Key struct {
+			Scope string
+		}
 	}
+}
 
-	// Set up a Transport using the config.
-	// transport := &oauth.Transport{Config: config,
-	//         Transport: &LogTransport{http.DefaultTransport},}
-	transport := &oauth.Transport{Config: config, Transport: http.DefaultTransport}
-
-	// Try to pull the token from the cache; if this fails, we need to get one.
-	token, err := config.TokenCache.Token()
+func gcloudTransport() (*oauth.Transport, error) {
+	f, err := os.Open(*gcloudCredentialsPath)
 	if err != nil {
-		if *clientId == "" || *clientSecret == "" {
-			flag.Usage()
-			fmt.Fprint(os.Stderr, "Client id and secret are required.")
-			os.Exit(2)
-		}
-		if *code == "" {
-			// Get an authorization code from the data provider.
-			// ("Please ask the user if I can access this resource.")
-			url := config.AuthCodeURL("")
-			fmt.Println("Visit this URL to get a code, then run again with -code=YOUR_CODE\n")
-			fmt.Println(url)
-			// The below doesn't work for some reason.  Not sure why.  I get 404's
-			// fmt.Print("Enter code: ")
-			// bio := bufio.NewReader(os.Stdin)
-			// code, err = bio.ReadString('\n')
-			// if err != nil {
-			//        log.Fatal("input: ", err)
-			// }
-			return nil
-		}
-		// Exchange the authorization code for an access token.
-		// ("Here's the code you gave the user, now give me a token!")
-		// TODO(bburns) : Put up a separate web end point to do the oauth dance, so a user can just go to a web page.
-		token, err = transport.Exchange(*code)
-		if err != nil {
-			log.Fatal("Exchange:", err)
-		}
-		// (The Exchange method will automatically cache the token.)
-		log.Printf("Token is cached in %v", config.TokenCache)
+		return nil, err
 	}
+	defer f.Close()
+	cache := &gcloudCredentialsCache{}
+	if err := json.NewDecoder(f).Decode(cache); err != nil {
+		return nil, err
+	}
+	log.Print(cache)
+	gcloud := cache.Data[0]
+	t := &oauth.Transport{
+		Config: &oauth.Config{
+			ClientId:     gcloud.Credential.Client_Id,
+			ClientSecret: gcloud.Credential.Client_Secret,
+			RedirectURL:  "oob",
+			Scope:        gcloud.Key.Scope,
+			AuthURL:      "https://accounts.google.com/o/oauth2/auth",
+			TokenURL:     "https://accounts.google.com/o/oauth2/token",
+		},
+		Token: &oauth.Token{
+			AccessToken:  gcloud.Credential.Access_Token,
+			RefreshToken: gcloud.Credential.Refresh_Token,
+			Expiry:       gcloud.Credential.Token_Expiry,
+		},
+		Transport: http.DefaultTransport,
+	}
+	return t, t.Refresh()
+}
 
-	// Make the actual request using the cached token to authenticate.
-	// ("Here's the token, let me in!")
-	transport.Token = token
-	log.Print("refreshing token: %v", token)
-	err = transport.Refresh()
+// Create a GCE Cloud instance.
+func NewGCECloud() Cloud {
+	// Set up a gcloud transport.
+	transport, err := gcloudTransport()
 	if err != nil {
-		log.Fatalf("failed to refresh oauth token: %v", err)
+		log.Fatalf("unable to create gcloud transport: %v", err)
 	}
-	log.Print("oauth token refreshed")
 
 	svc, err := compute.New(transport.Client())
 	if err != nil {
-		log.Printf("Error creating service: %v", err)
+		log.Fatalf("Error creating service: %v", err)
 	}
 	return &GCECloud{
 		service:   svc,
@@ -227,12 +215,15 @@ func (cloud GCECloud) CreateInstance(name string, zone string) (string, error) {
 
 // Implementation of the Cloud interface
 func (cloud GCECloud) DeleteInstance(name string, zone string) error {
+	log.Print("deleting instance")
 	op, err := cloud.service.Instances.Delete(cloud.projectId, zone, name).Do()
 	if err != nil {
 		log.Printf("Got compute.Operation, err: %#v, %v", op, err)
 		return err
 	}
-	return cloud.waitForOp(op, zone)
+	err = cloud.waitForOp(op, zone)
+	log.Print("instance deleted")
+	return err
 }
 
 func (cloud GCECloud) OpenSecureTunnel(name, zone string, localPort, remotePort int) (*os.Process, error) {
@@ -264,6 +255,7 @@ func (cloud GCECloud) openSecureTunnel(name, zone, hostname string, localPort, r
 func (cloud GCECloud) waitForOp(op *compute.Operation, zone string) error {
 	op, err := cloud.service.ZoneOperations.Get(cloud.projectId, zone, op.Name).Do()
 	for op.Status != "DONE" {
+		fmt.Print(".")
 		time.Sleep(5 * time.Second)
 		op, err = cloud.service.ZoneOperations.Get(cloud.projectId, zone, op.Name).Do()
 		if err != nil {
@@ -274,5 +266,6 @@ func (cloud GCECloud) waitForOp(op *compute.Operation, zone string) error {
 			return errors.New(fmt.Sprintf("Bad operation: %s", op))
 		}
 	}
+	fmt.Print("\n")
 	return err
 }

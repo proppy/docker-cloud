@@ -54,7 +54,7 @@ func main() {
 		flag.PrintDefaults()
 		os.Exit(-1)
 	}
-	cloud := DockerCloud{dockercloud.NewCloudGce()}
+	cloud := DockerCloud{dockercloud.NewGCECloud()}
 	switch args[0] {
 	case "start":
 		_, err := cloud.GetOrCreateInstance()
