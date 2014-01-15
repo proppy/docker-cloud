@@ -35,14 +35,19 @@ var (
 	image = flag.String("image",
 		"https://www.googleapis.com/compute/v1/projects/debian-cloud/global/images/backports-debian-7-wheezy-v20131127",
 		"The GCE image to boot from.")
-	diskName   = flag.String("diskname", "docker-root", "Name of the instance root disk")
-	diskSizeGb = flag.Int64("disksize", 100, "Size of the root disk in GB")
+	diskName     = flag.String("diskname", "docker-root", "Name of the instance root disk")
+	diskSizeGb   = flag.Int64("disksize", 100, "Size of the root disk in GB")
+	clientId     = flag.String("id", "676599397109-0te3n95co16j9mkinnq6vdhphp4nnd06.apps.googleusercontent.com", "Client id")
+	clientSecret = flag.String("secret", "JnMnI5z9iH7YItv_jy_TZ1Hg", "Client Secret")
+	scope        = flag.String("scope", "https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.read_write", "OAuth Scope")
+	code         = flag.String("code", "", "Authorization code")
+	projectId    = flag.String("project", "", "Google Cloud Project Name")
 )
 
 const startup = `#!/bin/bash
 sysctl -w net.ipv4.ip_forward=1
 wget -qO- https://get.docker.io/ | sh
-echo 'DOCKER_OPTS="-H :8000"' >> /etc/default/docker
+echo 'DOCKER_OPTS="-H :8000 -mtu 1460"' >> /etc/default/docker
 service docker restart && echo "docker restarted on port :8000"
 `
 
@@ -55,13 +60,13 @@ type GCECloud struct {
 // Create a GCE Cloud instance.  'clientId', 'clientSecret' and 'scope' are used to ask for a client
 // credential.  'code' is optional and is only used if a cached credential can not be found.
 // 'projectId' is the Google Cloud project name.
-func NewCloudGce(clientId string, clientSecret string, scope string, code string, projectId string) *GCECloud {
+func NewCloudGce() *GCECloud {
 	// Set up a configuration.
 	config := &oauth.Config{
-		ClientId:     clientId,
-		ClientSecret: clientSecret,
+		ClientId:     *clientId,
+		ClientSecret: *clientSecret,
 		RedirectURL:  "oob",
-		Scope:        scope,
+		Scope:        *scope,
 		AuthURL:      "https://accounts.google.com/o/oauth2/auth",
 		TokenURL:     "https://accounts.google.com/o/oauth2/token",
 		// TODO(bburns) : This prob. won't work on Windows
@@ -77,12 +82,12 @@ func NewCloudGce(clientId string, clientSecret string, scope string, code string
 	// Try to pull the token from the cache; if this fails, we need to get one.
 	token, err := config.TokenCache.Token()
 	if err != nil {
-		if clientId == "" || clientSecret == "" {
+		if *clientId == "" || *clientSecret == "" {
 			flag.Usage()
 			fmt.Fprint(os.Stderr, "Client id and secret are required.")
 			os.Exit(2)
 		}
-		if code == "" {
+		if *code == "" {
 			// Get an authorization code from the data provider.
 			// ("Please ask the user if I can access this resource.")
 			url := config.AuthCodeURL("")
@@ -100,7 +105,7 @@ func NewCloudGce(clientId string, clientSecret string, scope string, code string
 		// Exchange the authorization code for an access token.
 		// ("Here's the code you gave the user, now give me a token!")
 		// TODO(bburns) : Put up a separate web end point to do the oauth dance, so a user can just go to a web page.
-		token, err = transport.Exchange(code)
+		token, err = transport.Exchange(*code)
 		if err != nil {
 			log.Fatal("Exchange:", err)
 		}
@@ -124,7 +129,7 @@ func NewCloudGce(clientId string, clientSecret string, scope string, code string
 	}
 	return &GCECloud{
 		service:   svc,
-		projectId: projectId,
+		projectId: *projectId,
 	}
 }
 
